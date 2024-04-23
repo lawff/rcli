@@ -2,6 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use clap::Parser;
+use enum_dispatch::enum_dispatch;
 use tokio::fs;
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
 use super::{verify_input_file, verify_path};
 
 #[derive(Debug, Parser)]
+#[enum_dispatch(CmdExector)]
 pub enum TextSubCommand {
     #[command(
         name = "sign",
@@ -113,15 +115,5 @@ impl CmdExector for KeyGenerateOpts {
             fs::write(self.output_path.join(k), v).await?;
         }
         Ok(())
-    }
-}
-
-impl CmdExector for TextSubCommand {
-    async fn execute(self) -> anyhow::Result<()> {
-        match self {
-            TextSubCommand::Sign(opts) => opts.execute().await,
-            TextSubCommand::Verify(opts) => opts.execute().await,
-            TextSubCommand::Generate(opts) => opts.execute().await,
-        }
     }
 }
