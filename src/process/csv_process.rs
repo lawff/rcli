@@ -2,7 +2,7 @@ use anyhow::Result;
 use csv::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fs;
+use std::{fs, path::Path};
 
 use crate::cli::OutputFormat;
 
@@ -33,6 +33,6 @@ pub fn process_csv(input: &str, output: String, format: OutputFormat) -> Result<
         OutputFormat::Yaml => serde_yaml::to_string(&ret)?,
     };
     println!("{}", output);
-    fs::write(output, content)?;
+    fs::write(Path::new("fixtures").join(output), content)?;
     Ok(())
 }
