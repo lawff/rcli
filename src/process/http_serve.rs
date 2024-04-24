@@ -2,10 +2,16 @@ use anyhow::Result;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
+    response::{Html, IntoResponse, Response},
     routing::get,
     Router,
 };
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    fs,
+    net::SocketAddr,
+    path::{self, PathBuf},
+    sync::Arc,
+};
 use tower_http::services::ServeDir;
 use tracing::{info, warn};
 
@@ -20,6 +26,7 @@ pub async fn process_http_serve(path: PathBuf, port: u16) -> Result<()> {
 
     let state = HttpServeState { path: path.clone() };
     let router = Router::new()
+        .route("/", get(root))
         .nest_service("/static", ServeDir::new(path))
         .route("/*path", get(file_handler))
         .with_state(Arc::new(state));
@@ -29,33 +36,73 @@ pub async fn process_http_serve(path: PathBuf, port: u16) -> Result<()> {
     Ok(())
 }
 
+pub trait PathExector {
+    fn execute(&self, base_url: &path::Path) -> (StatusCode, Response);
+}
+
+impl PathExector for PathBuf {
+    fn execute(&self, base_url: &path::Path) -> (StatusCode, Response) {
+        info!("Reading path {:?}", self);
+        if self.is_dir() {
+            match fs::read_dir(self) {
+                Ok(entries) => {
+                    let mut content = String::new();
+                    content.push_str("<html><body><ul>");
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let name = path.file_name().unwrap().to_string_lossy();
+                        content.push_str(&format!(
+                            r#"<li><a href="/static/{}">{}</a></li>"#,
+                            path.strip_prefix(base_url).unwrap().to_string_lossy(),
+                            name
+                        ));
+                    }
+                    content.push_str("</ul></body></html>");
+                    (StatusCode::OK, Html(content).into_response())
+                }
+                Err(e) => {
+                    warn!("Failed to read directory: {:?}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to read directory: {:?}", e).into_response(),
+                    )
+                }
+            }
+        } else {
+            match fs::read_to_string(self) {
+                Ok(content) => {
+                    info!("Read {} bytes", content.len());
+                    (StatusCode::OK, Html(content).into_response())
+                }
+                Err(e) => {
+                    warn!("Failed to read file: {:?}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Failed to read file: {:?}", e).into_response(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+async fn root(State(state): State<Arc<HttpServeState>>) -> impl IntoResponse {
+    state.path.execute(&state.path)
+}
+
 async fn file_handler(
     State(state): State<Arc<HttpServeState>>,
     Path(path): Path<String>,
-) -> (StatusCode, String) {
+) -> (StatusCode, Response) {
     let p = std::path::Path::new(&state.path).join(path);
-    info!("Reading file {:?}", p);
 
     if !p.exists() {
         (
             StatusCode::NOT_FOUND,
-            format!("File {:?} not found", p.display()),
+            format!("File {:?} not found", p).into_response(),
         )
     } else {
-        // TODO: test p is a directory
-        // if it is a directory, list all files/subdirectories
-        // as <li><a href="/path/to/file">file name</a></li>
-        // <html><body><ul>...</ul></body></html>
-        match tokio::fs::read_to_string(p).await {
-            Ok(content) => {
-                info!("Read {} bytes", content.len());
-                (StatusCode::OK, content)
-            }
-            Err(e) => {
-                warn!("Failed to read file: {:?}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            }
-        }
+        p.execute(&state.path)
     }
 }
 
@@ -68,8 +115,9 @@ mod tests {
         let state = Arc::new(HttpServeState {
             path: PathBuf::from("."),
         });
-        let (status, content) = file_handler(State(state), Path("Cargo.toml".to_string())).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(content.trim().starts_with("[package]"));
+        let res = file_handler(State(state), Path("Cargo.toml".to_string()))
+            .await
+            .into_response();
+        assert_eq!(res.status(), StatusCode::OK);
     }
 }

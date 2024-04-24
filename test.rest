@@ -6,3 +6,7 @@ GET http://localhost:8080/Cargo.toml
 
 GET  http://localhost:8080/static/README.md
 Range: bytes=0-100
+
+
+### test dir
+GET  http://localhost:8080/static/lib.rs
