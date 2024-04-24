@@ -1,8 +1,11 @@
 use std::{collections::HashMap, io::Read};
 
 use anyhow::Result;
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    XChaCha20Poly1305,
+};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
 
 use crate::{process_genpass, TextSignFormat};
 
@@ -144,6 +147,40 @@ pub fn process_text_key_generate(format: TextSignFormat) -> Result<HashMap<&'sta
     }
 }
 
+pub fn process_text_encrypt(reader: &mut dyn Read, key: &[u8]) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    let key = (&key[..32]).into();
+    let cipher = XChaCha20Poly1305::new(key);
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut rand::rngs::OsRng);
+    match cipher.encrypt(&nonce, buf.as_slice().as_ref()) {
+        Ok(ciphertext) => {
+            // 将nonce和ciphertext连接起来
+            let mut nonce_and_ciphertext = Vec::new();
+            nonce_and_ciphertext.extend_from_slice(&nonce);
+            nonce_and_ciphertext.extend(ciphertext);
+
+            Ok(nonce_and_ciphertext)
+        }
+        _ => Err(anyhow::anyhow!("Failed to encrypt")),
+    }
+}
+
+pub fn process_text_decrypt(reader: &mut dyn Read, key: &[u8]) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    reader.read_to_end(&mut buf)?;
+    let key = (&key[..32]).into();
+    let cipher = XChaCha20Poly1305::new(key);
+    // 分离nonce和ciphertext
+    let nonce_and_ciphertext = buf.as_slice();
+    let nonce = &nonce_and_ciphertext[..24]; // Nonce是24字节长
+    let ciphertext = &nonce_and_ciphertext[24..];
+    match cipher.decrypt(nonce.into(), ciphertext) {
+        Ok(plaintext) => Ok(plaintext),
+        _ => Err(anyhow::anyhow!("Failed to decrypt")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,6 +207,17 @@ mod tests {
         let sig = URL_SAFE_NO_PAD.decode(sig)?;
         let ret = process_text_verify(&mut reader, KEY, &sig, format)?;
         assert!(ret);
+        Ok(())
+    }
+
+    #[test]
+    fn test_process_encrypt_decrypt() -> Result<()> {
+        let mut reader = "hello".as_bytes();
+        let encrypted = process_text_encrypt(&mut reader, KEY)?;
+        let mut reader = encrypted.as_slice();
+        let decrypted = process_text_decrypt(&mut reader, KEY)?;
+        let decrypted = String::from_utf8(decrypted)?;
+        assert_eq!(decrypted, "hello");
         Ok(())
     }
 }
