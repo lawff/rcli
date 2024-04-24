@@ -22,6 +22,9 @@ cargo run -- base64 decode -i fixtures/b64.txt -f urlsafe
 
 ```bash
 cargo run -- text sign -k fixtures/blake3.txt -i fixtures/b64.txt
+
+cargo run -- text encrypt
+cargo run -- text decrypt
 ```
 
 ### HTTP
