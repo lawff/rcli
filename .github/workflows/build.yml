@@ -53,3 +53,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           body: ${{ steps.git-cliff.outputs.content }}
+          files: |
+            target/release/rcli
+            CHANGES.md
+            README.md
