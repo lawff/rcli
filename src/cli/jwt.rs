@@ -1,9 +1,8 @@
 use clap::Parser;
 use enum_dispatch::enum_dispatch;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
-use serde::{Deserialize, Serialize};
+use jsonwebtoken::Algorithm;
 
-use crate::{get_content, CmdExector};
+use crate::{process_jwt_sign, process_jwt_verify, CmdExector};
 
 #[derive(Debug, Parser)]
 #[enum_dispatch(CmdExector)]
@@ -36,16 +35,16 @@ pub struct VerifyOpts {
     pub aud: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    aud: String,
-    exp: usize,
-}
-
 fn parse_duration(s: &str) -> Result<usize, String> {
     let len = s.len();
-    let (num, unit) = s.split_at(len - 1);
+    let mut num = s;
+    let mut unit = "s"; // 默认单位为秒
+
+    if s.ends_with('s') || s.ends_with('m') || s.ends_with('h') || s.ends_with('d') {
+        let (num_part, unit_suffix) = s.split_at(len - 1);
+        num = num_part;
+        unit = unit_suffix;
+    }
 
     let num = match num.parse::<usize>() {
         Ok(n) => n,
@@ -62,21 +61,7 @@ fn parse_duration(s: &str) -> Result<usize, String> {
 
 impl CmdExector for SignOpts {
     async fn execute(self) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().timestamp() as usize;
-        let my_claims = Claims {
-            sub: self.sub,
-            exp: now + self.exp,
-            aud: self.aud,
-        };
-        let key = get_content("fixtures/jwt_secret.key")?;
-        let key = key.as_slice();
-
-        let header = Header {
-            alg: self.alg,
-            ..Default::default()
-        };
-
-        let token = encode(&header, &my_claims, &EncodingKey::from_secret(key))?;
+        let token = process_jwt_sign(self.sub, self.exp, self.aud, self.alg)?;
         println!("{}", token);
 
         Ok(())
@@ -85,18 +70,11 @@ impl CmdExector for SignOpts {
 
 impl CmdExector for VerifyOpts {
     async fn execute(self) -> anyhow::Result<()> {
-        let token = self.token;
-        let key = get_content("fixtures/jwt_secret.key")?;
-        let key = key.as_slice();
-
-        let mut validation = Validation::new(self.alg);
-        validation.set_audience(&[self.aud]);
-        validation.set_required_spec_claims(&["aud"]);
-
-        let decoded = decode::<Claims>(&token, &DecodingKey::from_secret(key), &validation)?;
-
-        println!("{:?}", decoded.claims);
-        println!("{:?}", decoded.header);
+        match process_jwt_verify(self.token, self.aud, self.alg) {
+            Ok(true) => println!("JWT token is valid"),
+            Ok(false) => println!("JWT token is invalid"),
+            Err(e) => eprintln!("JWT token is invalid, Error: {}", e),
+        }
 
         Ok(())
     }
